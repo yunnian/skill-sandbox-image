@@ -141,6 +141,8 @@ async function main() {
 
   const begin = toInt(args.begin, 0);
   const count = toInt(args.count, 20);
+  const fetchAll = toBool(args["fetch-all"], false);
+  const maxPages = toInt(args["max-pages"], 200);
   const filterType = toInt(args["filter-type"], 0);
   const day = toInt(args.day, 0);
   const type = toInt(args.type, 2);
@@ -168,30 +170,76 @@ async function main() {
       return;
     }
 
-    const response = await mpJsonFetch(page, buildListCommentUrl({
-      token: state.token,
-      commentId,
-      begin,
-      count,
-      filterType,
-      day,
-      type,
-      maxId,
-    }));
+    const fetchedComments = [];
+    const pageInfos = [];
+    let articleTitle = "";
+    let commentListCount = null;
+    let lastResponse = null;
+    const pageSize = Math.max(1, count);
+    const pageStart = Math.max(0, begin);
+    const seenTopCommentIds = new Set();
 
-    const parsed = parseCommentListPayload(response.data);
-    const comments = Array.isArray(parsed?.comment_list?.comment)
-      ? parsed.comment_list.comment
-      : Array.isArray(parsed?.comment_list)
-        ? parsed.comment_list
-        : [];
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      const currentBegin = fetchAll ? (pageStart + pageIndex * pageSize) : pageStart;
+      const response = await mpJsonFetch(page, buildListCommentUrl({
+        token: state.token,
+        commentId,
+        begin: currentBegin,
+        count: pageSize,
+        filterType,
+        day,
+        type,
+        maxId,
+      }));
+      lastResponse = response;
 
-    const articleTitle = parsed?.comment_list?.title || parsed?.title || "";
-    const topComments = comments.map((comment) => normalizeTopComment(comment, articleTitle));
+      const parsed = parseCommentListPayload(response.data);
+      if (!commentListCount) {
+        commentListCount = parsed?.comment_list_count || null;
+      }
+      if (!articleTitle) {
+        articleTitle = parsed?.comment_list?.title || parsed?.title || "";
+      }
+      const comments = Array.isArray(parsed?.comment_list?.comment)
+        ? parsed.comment_list.comment
+        : Array.isArray(parsed?.comment_list)
+          ? parsed.comment_list
+          : [];
+      for (const comment of comments) {
+        const id = comment?.id != null ? String(comment.id) : "";
+        if (id && seenTopCommentIds.has(id)) {
+          continue;
+        }
+        if (id) {
+          seenTopCommentIds.add(id);
+        }
+        fetchedComments.push(comment);
+      }
+
+      pageInfos.push({
+        begin: currentBegin,
+        count: pageSize,
+        status: response.status,
+        size: comments.length,
+      });
+
+      if (!fetchAll) {
+        break;
+      }
+      if (comments.length < pageSize) {
+        break;
+      }
+      const totalCount = Number(parsed?.comment_list_count?.total_count || 0);
+      if (totalCount > 0 && fetchedComments.length >= totalCount) {
+        break;
+      }
+    }
+
+    const topComments = fetchedComments.map((comment) => normalizeTopComment(comment, articleTitle));
     const repliesByTopCommentId = new Map();
     if (withReplies) {
-      for (let index = 0; index < comments.length; index += 1) {
-        const comment = comments[index];
+      for (let index = 0; index < fetchedComments.length; index += 1) {
+        const comment = fetchedComments[index];
         const normalizedTopComment = topComments[index];
         const replyData = await fetchReplies(page, state.token, commentId, comment, replyLimit);
         if (replyData) {
@@ -212,23 +260,25 @@ async function main() {
     ));
 
     console.log(JSON.stringify({
-      ok: response.ok,
+      ok: Boolean(lastResponse?.ok),
       profileDir,
       token: state.token,
       commentId: String(commentId),
       http: {
-        status: response.status,
-        url: response.url,
+        status: lastResponse?.status ?? null,
+        url: lastResponse?.url ?? "",
       },
       summary: {
-        commentCount: comments.length,
+        commentCount: fetchedComments.length,
+        fetchAll,
+        pagesFetched: pageInfos.length,
         withReplies,
       },
       article: { title: articleTitle, commentId: String(commentId) },
       threads,
       raw: {
-        base_resp: parsed?.base_resp || null,
-        comment_list_count: parsed?.comment_list_count || null,
+        comment_list_count: commentListCount,
+        pages: pageInfos,
       },
       resolved: null,
     }, null, 2));
