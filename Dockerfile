@@ -101,10 +101,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install common JS tooling and preload browser binaries for agent-browser.
+# Install common JS tooling and preload browser binaries.
 RUN set -euo pipefail \
-    && npm install -g openskills agent-browser docx \
-    && npm install -g playwright --ignore-scripts \
+    && npm install -g openskills agent-browser docx playwright \
+    && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright install chromium \
     && agent-browser install --with-deps
 
 # ------------------------------------------------------------------------------
@@ -161,9 +161,7 @@ mkdir -p /root/.agent/skills /root/.agent/system_skills /root/.agent/user_skills
 find /root/.agent/system_skills -mindepth 1 -maxdepth 1 -type d | while read -r d; do
   if [ -f "$d/SKILL.md" ]; then
     name="$(basename "$d")"
-    if [ ! -e "/root/.agent/user_skills/${name}" ]; then
-      cp -a "$d" "/root/.agent/user_skills/${name}"
-    fi
+    ln -sfnT "$d" "/root/.agent/skills/${name}"
   fi
 done
 

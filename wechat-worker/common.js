@@ -61,6 +61,7 @@ function parseArticleIdentifiersFromUrl(url) {
       mid: null,
       idx: null,
       sn: null,
+      title: "",
     };
   }
 
@@ -72,6 +73,7 @@ function parseArticleIdentifiersFromUrl(url) {
     mid: null,
     idx: null,
     sn: null,
+    title: "",
   };
 
   try {
@@ -80,6 +82,19 @@ function parseArticleIdentifiersFromUrl(url) {
     result.mid = parsed.searchParams.get("mid");
     result.idx = parsed.searchParams.get("idx");
     result.sn = parsed.searchParams.get("sn");
+    // 微信后台发表数据页常见形态：msgid=2247485498_1
+    const msgid = parsed.searchParams.get("msgid");
+    if (msgid && (!result.mid || !result.idx)) {
+      const matched = String(msgid).match(/^(\d+)_([0-9]+)$/);
+      if (matched) {
+        if (!result.mid) {
+          result.mid = matched[1];
+        }
+        if (!result.idx) {
+          result.idx = matched[2];
+        }
+      }
+    }
   } catch (error) {
     return result;
   }
@@ -278,6 +293,7 @@ async function resolveArticleIdentifiers(articleUrl, options = {}) {
       mid: typeof window.mid !== "undefined" ? String(window.mid) : null,
       idx: typeof window.idx !== "undefined" ? String(window.idx) : null,
       sn: typeof window.sn !== "undefined" ? String(window.sn) : null,
+      title: document && document.title ? String(document.title) : "",
     }));
 
     const merged = {
@@ -288,6 +304,7 @@ async function resolveArticleIdentifiers(articleUrl, options = {}) {
       mid: runtime.mid || direct.mid,
       idx: runtime.idx || direct.idx,
       sn: runtime.sn || direct.sn,
+      title: runtime.title || direct.title || "",
     };
 
     await context.close();
