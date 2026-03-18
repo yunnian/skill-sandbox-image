@@ -12,6 +12,7 @@ const {
 async function main() {
   const args = parseArgs(process.argv);
   const waitForLogin = toBool(args["wait-for-login"], false);
+  const holdOpenSeconds = toInt(args["hold-open-seconds"], 0);
   const intervalSeconds = toInt(args["interval-seconds"], 3);
   const timeoutSeconds = toInt(args["timeout-seconds"], 900);
   const { context, page, profileDir } = await launchPersistentContext({
@@ -35,10 +36,15 @@ async function main() {
       }
     }
 
+    if (holdOpenSeconds > 0) {
+      await page.waitForTimeout(holdOpenSeconds * 1000);
+    }
+
     console.log(JSON.stringify({
       ok: state.loggedIn || !waitForLogin,
       profileDir,
       waitForLogin,
+      holdOpenSeconds,
       timeoutSeconds,
       ...state,
     }, null, 2));

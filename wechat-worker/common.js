@@ -118,6 +118,8 @@ async function launchPersistentContext(options = {}) {
     locale: "zh-CN",
     timezoneId: process.env.TZ || "Asia/Shanghai",
     args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-blink-features=AutomationControlled",
       "--no-default-browser-check",
