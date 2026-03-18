@@ -137,7 +137,6 @@ async function launchPersistentContext(options = {}) {
 
 async function ensureMpHome(page) {
   await page.goto(MP_HOME_URL, { waitUntil: "domcontentloaded", timeout: DEFAULT_TIMEOUT });
-  await page.waitForTimeout(1500);
   return page.url();
 }
 
