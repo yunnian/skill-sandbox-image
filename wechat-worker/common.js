@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
+const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
 
 const DEFAULT_PROFILE_DIR = process.env.WECHAT_WORKER_PROFILE_DIR || "/data/wechat-worker/profile";
 const DEFAULT_TIMEOUT = Number(process.env.WECHAT_WORKER_TIMEOUT_MS || 30000);
 const MP_HOME_URL = "https://mp.weixin.qq.com/";
+const MP_ORIGIN = new URL(MP_HOME_URL).origin;
 const WECHAT_MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.47(0x18002f2c) NetType/WIFI Language/zh_CN";
 
 function parseArgs(argv) {
@@ -102,6 +104,33 @@ function parseArticleIdentifiersFromUrl(url) {
   return result;
 }
 
+function readStateFile(stateFile) {
+  if (!stateFile) {
+    return {};
+  }
+  try {
+    const text = fs.readFileSync(path.resolve(stateFile), "utf8");
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function writeStateFile(stateFile, patch = {}) {
+  if (!stateFile) {
+    return;
+  }
+  const resolved = path.resolve(stateFile);
+  const current = readStateFile(resolved);
+  const next = {
+    ...current,
+    ...patch,
+  };
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  fs.writeFileSync(resolved, JSON.stringify(next, null, 2), "utf8");
+}
+
 async function launchPersistentContext(options = {}) {
   const profileDir = options.profileDir || DEFAULT_PROFILE_DIR;
   const headless = options.headless ?? toBool(process.env.WECHAT_WORKER_HEADLESS, true);
@@ -185,6 +214,65 @@ async function mpJsonFetch(page, relativeUrl) {
       data,
     };
   }, relativeUrl);
+}
+
+function toAbsoluteMpUrl(requestUrl) {
+  if (!requestUrl) {
+    return MP_HOME_URL;
+  }
+  if (/^https?:\/\//i.test(String(requestUrl))) {
+    return String(requestUrl);
+  }
+  return MP_ORIGIN + (String(requestUrl).startsWith("/") ? String(requestUrl) : `/${requestUrl}`);
+}
+
+async function mpJsonRequest(requestContext, requestUrl) {
+  const response = await requestContext.get(toAbsoluteMpUrl(requestUrl), {
+    timeout: DEFAULT_TIMEOUT,
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    data = null;
+  }
+  return {
+    ok: response.ok(),
+    status: response.status(),
+    url: response.url(),
+    text,
+    data,
+  };
+}
+
+async function resolveMpHomeStateFast(context, page) {
+  const currentUrl = page?.url?.() || "";
+  const currentToken = extractToken(currentUrl);
+  if (currentToken) {
+    return {
+      url: currentUrl,
+      token: currentToken,
+      bodyPreview: "",
+    };
+  }
+
+  const response = await context.request.get(MP_HOME_URL, {
+    timeout: DEFAULT_TIMEOUT,
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+  const text = await response.text();
+  return {
+    url: response.url(),
+    token: extractToken(response.url()),
+    bodyPreview: String(text || "").slice(0, 500),
+  };
 }
 
 function parseCommentListPayload(payload) {
@@ -326,12 +414,16 @@ module.exports = {
   extractToken,
   launchPersistentContext,
   mpJsonFetch,
+  mpJsonRequest,
   normalizeLatestCommentArticleItem,
   parseArgs,
   parseArticleIdentifiersFromUrl,
   parseCommentListPayload,
   parseLatestCommentArticlesPayload,
+  readStateFile,
   resolveArticleIdentifiers,
+  resolveMpHomeStateFast,
   toBool,
   toInt,
+  writeStateFile,
 };
