@@ -135,9 +135,14 @@ async function launchPersistentContext(options = {}) {
   const profileDir = options.profileDir || DEFAULT_PROFILE_DIR;
   const headless = options.headless ?? toBool(process.env.WECHAT_WORKER_HEADLESS, true);
   const slowMo = toInt(options.slowMo ?? process.env.WECHAT_WORKER_SLOW_MO, 0);
-  const viewport = {
-    width: toInt(process.env.WECHAT_WORKER_VIEWPORT_WIDTH, 1440),
-    height: toInt(process.env.WECHAT_WORKER_VIEWPORT_HEIGHT, 900),
+  const defaultViewport = {
+    width: toInt(process.env.WECHAT_WORKER_VIEWPORT_WIDTH, 1040),
+    height: toInt(process.env.WECHAT_WORKER_VIEWPORT_HEIGHT, 560),
+  };
+  const viewport = headless ? defaultViewport : null;
+  const windowSize = {
+    width: toInt(process.env.WECHAT_WORKER_WINDOW_WIDTH, 1600),
+    height: toInt(process.env.WECHAT_WORKER_WINDOW_HEIGHT, 900),
   };
 
   const context = await chromium.launchPersistentContext(path.resolve(profileDir), {
@@ -153,6 +158,10 @@ async function launchPersistentContext(options = {}) {
       "--disable-blink-features=AutomationControlled",
       "--no-default-browser-check",
       "--disable-features=Translate,OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints",
+      "--force-device-scale-factor=1",
+      "--window-position=0,0",
+      `--window-size=${windowSize.width},${windowSize.height}`,
+      ...(headless ? [] : ["--start-maximized"]),
     ],
   });
 
@@ -161,6 +170,17 @@ async function launchPersistentContext(options = {}) {
     page = await context.newPage();
   }
   page.setDefaultTimeout(options.timeoutMs || DEFAULT_TIMEOUT);
+  if (!headless) {
+    await page.bringToFront().catch(() => {});
+    await page.evaluate(() => {
+      try {
+        window.focus();
+      } catch (error) {
+        return false;
+      }
+      return true;
+    }).catch(() => {});
+  }
   return { context, page, profileDir };
 }
 
