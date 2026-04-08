@@ -29,7 +29,7 @@ function appendJsonLine(filePath, payload) {
 async function main() {
   const args = parseArgs(process.argv);
   const holdOpenSeconds = toInt(args["hold-open-seconds"], 1800);
-  const logFile = args["log-file"] || "/workspace/wechat-comment-monitor/reply_capture.log";
+  const logFile = args["log-file"] || "/workspace/system/wechat-comment-monitor/reply_capture.log";
   const { context, page, profileDir } = await launchPersistentContext({
     profileDir: args["profile-dir"],
     headless: toBool(args.headless, false),
@@ -120,7 +120,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  const logFile = parseArgs(process.argv)["log-file"] || "/workspace/wechat-comment-monitor/reply_capture.log";
+  const logFile = parseArgs(process.argv)["log-file"] || "/workspace/system/wechat-comment-monitor/reply_capture.log";
   appendJsonLine(logFile, {
     type: "error",
     ts: Date.now(),

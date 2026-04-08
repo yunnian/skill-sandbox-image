@@ -42,7 +42,8 @@ docker run --rm -it \
 - `EXECD_ACCESS_TOKEN` (optional)
 - `KX_SANDBOX_IMAGE_VERSION` (default: `1.0.6`)
 - `WECHAT_WORKER_HEADLESS` (default: `true`)
-- `WECHAT_WORKER_PROFILE_DIR` (default: `/data/wechat-worker/profile`)
+- `BROWSER_PROFILE_ROOT` (default: `/workspace/browser-data`)
+- `WECHAT_WORKER_PROFILE_DIR` (default: `/workspace/browser-data/wechat-mp/draft-publisher/default`)
 
 ## Language versions
 

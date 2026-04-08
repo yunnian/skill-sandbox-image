@@ -23,22 +23,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     EXECD_PORT=44772 \
     EXECD_LOG_LEVEL=6 \
     DISPLAY=:99.0 \
-    DISPLAY_WIDTH=1280 \
-    DISPLAY_HEIGHT=720 \
+    DISPLAY_WIDTH=1920 \
+    DISPLAY_HEIGHT=1080 \
     DISPLAY_DEPTH=24 \
     VNC_SERVER_PORT=5900 \
     WEBSOCKET_PROXY_PORT=6080 \
     PUBLIC_PORT=8080 \
-    GO_VERSION=1.25.5 \
-    JAVA_VERSION=21 \
     LOG_DIR=/var/log/kx-sandbox \
     NODE_PATH=/usr/lib/node_modules:/usr/local/lib/node_modules \
     NODE_VERSION=22 \
+    AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/chromium \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers \
+    BROWSER_PROFILE_ROOT=/workspace/browser-data \
     PYTHON_VERSION=3.12 \
     KX_SANDBOX_IMAGE_VERSION=1.0.6
-
-ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # ------------------------------------------------------------------------------
 # APT mirrors
@@ -75,13 +73,13 @@ RUN if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then \
 # ------------------------------------------------------------------------------
 # System dependencies
 # ------------------------------------------------------------------------------
+# Runtime image intentionally excludes Java toolchain for now.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     curl wget unzip zip tar git build-essential \
     gettext-base \
     libreoffice \
     python3 python3-pip python3-venv \
-    openjdk-21-jdk \
     nginx supervisor \
     tigervnc-standalone-server x11-xserver-utils \
     openbox websockify netcat-openbsd \
@@ -104,27 +102,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # Install common JS tooling and preload browser binaries.
 RUN set -euo pipefail \
     && npm install -g openskills agent-browser docx playwright \
-    && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright install chromium \
-    && agent-browser install --with-deps
+    && PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers playwright install --with-deps chromium \
+    && browser_bin="$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")" \
+    && test -n "${browser_bin}" \
+    && ln -sf "${browser_bin}" /usr/local/bin/chromium
 
 # ------------------------------------------------------------------------------
 # Go toolchain
 # ------------------------------------------------------------------------------
-RUN case "${TARGETARCH}" in \
-      amd64) go_arch="amd64" ;; \
-      arm64) go_arch="arm64" ;; \
-      "") \
-        case "$(uname -m)" in \
-          x86_64) go_arch="amd64" ;; \
-          aarch64) go_arch="arm64" ;; \
-          *) echo "Unsupported arch: $(uname -m)"; exit 1 ;; \
-        esac ;; \
-      *) echo "Unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
-    esac \
-    && curl -fL --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 20 \
-      "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" -o /tmp/go.tar.gz \
-    && tar -C /usr/local -xzf /tmp/go.tar.gz \
-    && rm -f /tmp/go.tar.gz
+# Runtime image intentionally excludes Go toolchain for now.
+# The execd-builder stage above still uses Go because execd is built there.
 
 # ------------------------------------------------------------------------------
 # noVNC assets
@@ -135,13 +122,14 @@ RUN curl -fL --retry 6 --retry-all-errors --retry-delay 3 --connect-timeout 20 \
     && unzip -q /tmp/novnc.zip -d /tmp/novnc \
     && mv "/tmp/novnc/noVNC-${NOVNC_VERSION#v}" /opt/novnc \
     && cp /opt/novnc/vnc.html /opt/novnc/index.html \
+    && python3 -c "from pathlib import Path; p = Path('/opt/novnc/vnc_lite.html'); text = p.read_text(); injection = '        #top_bar {\\n            display: none !important;\\n        }\\n'; p.write_text(text if injection.strip() in text else text.replace('    </style>', injection + '    </style>', 1))" \
     && rm -rf /tmp/novnc /tmp/novnc.zip
 
 # ------------------------------------------------------------------------------
 # Sandbox bootstrap
 # ------------------------------------------------------------------------------
 RUN ln -sf /usr/bin/python3 /usr/local/bin/python \
-    && mkdir -p /opt/kx-sandbox /opt/kx-sandbox/conf.d /opt/kuxuan/wechat-worker /data/wechat-worker/profile
+    && mkdir -p /opt/kx-sandbox /opt/kx-sandbox/conf.d /opt/kuxuan/wechat-worker
 
 COPY wechat-worker/ /opt/kuxuan/wechat-worker/
 
@@ -156,7 +144,9 @@ log_dir="${LOG_DIR:-/var/log/kx-sandbox}"
 mkdir -p /tmp/.X11-unix "${log_dir}" /opt/kx-sandbox/conf.d
 chmod 1777 /tmp/.X11-unix "${log_dir}"
 
-mkdir -p /root/.agent/skills /root/.agent/system_skills /root/.agent/user_skills
+mkdir -p /root/.agent /root/.agent/skills /root/.agent/system_skills \
+  /workspace/skills /workspace/uploads /workspace/generated \
+  /workspace/system /workspace/browser-data
 
 find /root/.agent/system_skills -mindepth 1 -maxdepth 1 -type d | while read -r d; do
   if [ -f "$d/SKILL.md" ]; then
@@ -165,7 +155,7 @@ find /root/.agent/system_skills -mindepth 1 -maxdepth 1 -type d | while read -r 
   fi
 done
 
-find /root/.agent/user_skills -mindepth 1 -maxdepth 1 -type d | while read -r d; do
+find /workspace/skills -mindepth 1 -maxdepth 1 -type d | while read -r d; do
   if [ -f "$d/SKILL.md" ]; then
     name="$(basename "$d")"
     ln -sfnT "$d" "/root/.agent/skills/${name}"

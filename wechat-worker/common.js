@@ -4,7 +4,8 @@ const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
 
-const DEFAULT_PROFILE_DIR = process.env.WECHAT_WORKER_PROFILE_DIR || "/data/wechat-worker/profile";
+const BROWSER_PROFILE_ROOT = process.env.BROWSER_PROFILE_ROOT || "/workspace/browser-data";
+const DEFAULT_PROFILE_DIR = process.env.WECHAT_WORKER_PROFILE_DIR || path.join(BROWSER_PROFILE_ROOT, "wechat-mp", "draft-publisher", "default");
 const DEFAULT_TIMEOUT = Number(process.env.WECHAT_WORKER_TIMEOUT_MS || 30000);
 const MP_HOME_URL = "https://mp.weixin.qq.com/";
 const MP_ORIGIN = new URL(MP_HOME_URL).origin;
@@ -131,6 +132,40 @@ function writeStateFile(stateFile, patch = {}) {
   fs.writeFileSync(resolved, JSON.stringify(next, null, 2), "utf8");
 }
 
+async function maximizeChromiumWindow(context, page, windowSize) {
+  if (!context || !page) {
+    return;
+  }
+  let session;
+  try {
+    session = await context.newCDPSession(page);
+    const { windowId } = await session.send("Browser.getWindowForTarget");
+    if (!windowId) {
+      return;
+    }
+    await session.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: {
+        windowState: "maximized",
+      },
+    }).catch(async () => {
+      await session.send("Browser.setWindowBounds", {
+        windowId,
+        bounds: {
+          left: 0,
+          top: 0,
+          width: windowSize.width,
+          height: windowSize.height,
+        },
+      });
+    });
+  } catch (error) {
+    // Ignore window-management failures and fall back to launch args.
+  } finally {
+    await session?.detach().catch(() => {});
+  }
+}
+
 async function launchPersistentContext(options = {}) {
   const profileDir = options.profileDir || DEFAULT_PROFILE_DIR;
   const headless = options.headless ?? toBool(process.env.WECHAT_WORKER_HEADLESS, true);
@@ -141,8 +176,8 @@ async function launchPersistentContext(options = {}) {
   };
   const viewport = headless ? defaultViewport : null;
   const windowSize = {
-    width: toInt(process.env.WECHAT_WORKER_WINDOW_WIDTH, 1600),
-    height: toInt(process.env.WECHAT_WORKER_WINDOW_HEIGHT, 900),
+    width: toInt(process.env.WECHAT_WORKER_WINDOW_WIDTH, 1920),
+    height: toInt(process.env.WECHAT_WORKER_WINDOW_HEIGHT, 1080),
   };
 
   const context = await chromium.launchPersistentContext(path.resolve(profileDir), {
@@ -180,6 +215,7 @@ async function launchPersistentContext(options = {}) {
       }
       return true;
     }).catch(() => {});
+    await maximizeChromiumWindow(context, page, windowSize);
   }
   return { context, page, profileDir };
 }
@@ -190,24 +226,38 @@ async function ensureMpHome(page) {
 }
 
 async function detectLoginState(page) {
-  const url = page.url();
-  const title = await page.title();
-  const bodyText = await page.locator("body").innerText().catch(() => "");
-  const token = extractToken(url);
-  const waitingForConfirm = /扫码成功|请在微信中选择账号登录|重新扫码/.test(bodyText);
-  const loginPage = /微信扫一扫|公众平台登录|请使用微信扫码登录|公众平台账号登录/.test(bodyText);
-  const needLogin = (!token && loginPage) || waitingForConfirm;
-  const loggedIn = Boolean(token)
-    || (!needLogin && /\/cgi-bin\//.test(url) && /首页|数据助手|内容与互动|草稿箱|发表记录|用户管理/.test(bodyText));
-  return {
-    loggedIn,
-    needLogin,
-    waitingForConfirm,
-    url,
-    title,
-    token,
-    bodyPreview: String(bodyText || "").slice(0, 500),
-  };
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const url = page.url();
+      const title = await page.title().catch(() => "");
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      const token = extractToken(url);
+      const waitingForConfirm = /扫码成功|请在微信中选择账号登录|重新扫码/.test(bodyText);
+      const loginPage = /微信扫一扫|公众平台登录|请使用微信扫码登录|公众平台账号登录/.test(bodyText);
+      const needLogin = (!token && loginPage) || waitingForConfirm;
+      const loggedIn = Boolean(token)
+        || (!needLogin && /\/cgi-bin\//.test(url) && /首页|数据助手|内容与互动|草稿箱|发表记录|用户管理/.test(bodyText));
+      return {
+        loggedIn,
+        needLogin,
+        waitingForConfirm,
+        url,
+        title,
+        token,
+        bodyPreview: String(bodyText || "").slice(0, 500),
+      };
+    } catch (error) {
+      lastError = error;
+      const message = error && error.message ? error.message : String(error);
+      const isTransientNavigationError = /Execution context was destroyed|Target page, context or browser has been closed|Most likely the page has been closed|Cannot find context/i.test(message);
+      if (!isTransientNavigationError || attempt >= 2) {
+        throw error;
+      }
+      await page.waitForTimeout(300);
+    }
+  }
+  throw lastError || new Error("detectLoginState failed");
 }
 
 async function mpJsonFetch(page, relativeUrl) {
@@ -424,6 +474,7 @@ async function resolveArticleIdentifiers(articleUrl, options = {}) {
 }
 
 module.exports = {
+  BROWSER_PROFILE_ROOT,
   DEFAULT_PROFILE_DIR,
   DEFAULT_TIMEOUT,
   MP_HOME_URL,
